@@ -48,7 +48,7 @@ Your server includes a built-in authorization middleware. Requests without a val
 * `external_website_key_xyz`
 
 ### 1. Public Health Check (No Key Required)
-**Endpoint:** `GET http://localhost:5000/api/health`
+**Endpoint:** `GET https://kisan-commodity.onrender.com/api/health`
 **Response:**
 ```json
 {
@@ -59,17 +59,17 @@ Your server includes a built-in authorization middleware. Requests without a val
 ```
 
 ### 2. Fetch Mandi Prices (Protected)
-**Endpoint:** `GET http://localhost:5000/api/mandi-prices`
+**Endpoint:** `GET https://kisan-commodity.onrender.com/api/mandi-prices`
 
 #### Option A: Pass Key in Request Headers (Best Practice 🔐)
 Send a request with the header `x-api-key` set to your key:
 ```bash
-curl -H "x-api-key: agro_secret_key_12345" http://localhost:5000/api/mandi-prices
+curl -H "x-api-key: agro_secret_key_12345" https://kisan-commodity.onrender.com/api/mandi-prices
 ```
 
 #### Option B: Pass Key in Query Parameters (Easiest for testing 🌐)
 Open this directly in your browser or pass it as a URL parameter:
-👉 `http://localhost:5000/api/mandi-prices?api_key=agro_secret_key_12345`
+👉 `https://kisan-commodity.onrender.com/api/mandi-prices?api_key=agro_secret_key_12345`
 
 **Successful Response Format:**
 ```json

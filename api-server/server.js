@@ -682,7 +682,7 @@ app.get('/', (req, res) => {
 
                 <!-- URL Indicator -->
                 <div class="bg-slate-950 p-3 rounded-xl border border-slate-900 text-[11px] font-mono flex items-center justify-between gap-3 text-slate-400">
-                  <span class="font-semibold select-all" id="url-preview">http://localhost:5000/api/mandi-prices?api_key=agro_secret_key_12345&limit=5&page=1</span>
+                  <span class="font-semibold select-all" id="url-preview">https://kisan-commodity.onrender.com/api/mandi-prices?api_key=agro_secret_key_12345&limit=5&page=1</span>
                   <span class="text-[10px] font-bold bg-green-500/10 text-green-500 px-2 py-0.5 rounded uppercase">GET</span>
                 </div>
               </div>
@@ -702,7 +702,7 @@ app.get('/', (req, res) => {
               </div>
 
               <div class="bg-slate-950 p-5 rounded-2xl border border-slate-850 font-mono text-[11.5px] text-slate-300 relative select-text overflow-x-auto">
-                <pre id="code-snippet-box" class="whitespace-pre">curl -H "x-api-key: agro_secret_key_12345" "http://localhost:5000/api/mandi-prices?limit=5"</pre>
+                <pre id="code-snippet-box" class="whitespace-pre">curl -H "x-api-key: agro_secret_key_12345" "https://kisan-commodity.onrender.com/api/mandi-prices?limit=5"</pre>
               </div>
             </div>
           </div>
