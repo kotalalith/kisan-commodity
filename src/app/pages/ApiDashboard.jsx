@@ -27,6 +27,8 @@ import {
   Code
 } from "lucide-react";
 
+const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
 // Beautiful syntax highlighter helper for integration code blocks
 const renderHighlightedCode = (tab, apiKey) => {
   if (tab === "curl") {
@@ -35,7 +37,7 @@ const renderHighlightedCode = (tab, apiKey) => {
         <span className="tok-keyword font-bold">curl</span>{" "}
         <span className="tok-operator">-X</span>{" "}
         <span className="tok-boolean font-bold">GET</span> \{`\n  `}
-        <span className="tok-string">"https://kisan-commodity.onrender.com/api/mandi-prices?api_key={apiKey}"</span> \{`\n  `}
+        <span className="tok-string">"{baseUrl}/api/mandi-prices?api_key={apiKey}"</span> \{`\n  `}
         <span className="tok-operator">-H</span>{" "}
         <span className="tok-string">"x-api-key: {apiKey}"</span>
       </code>
@@ -52,7 +54,7 @@ const renderHighlightedCode = (tab, apiKey) => {
         {"    "}<span className="tok-keyword font-bold text-pink-500">const</span> <span className="tok-variable">res</span> ={" "}
         <span className="tok-keyword font-bold text-pink-500">await</span>{" "}
         <span className="tok-function font-bold text-blue-400">fetch</span>(
-        <span className="tok-string">"https://kisan-commodity.onrender.com/api/mandi-prices"</span>, {"{"}{`\n`}
+        <span className="tok-string">"{baseUrl}/api/mandi-prices"</span>, {"{"}{`\n`}
         {"      "}headers: {"{"}{`\n`}
         {"        "}<span className="tok-string">"x-api-key"</span>:{" "}
         <span className="tok-string">"{apiKey}"</span>{`\n`}
@@ -78,7 +80,7 @@ const renderHighlightedCode = (tab, apiKey) => {
         <span className="tok-comment"># Python Requests Implementation</span>{`\n`}
         <span className="tok-keyword font-bold text-pink-500">import</span> <span className="tok-variable">requests</span>{`\n\n`}
         <span className="tok-variable">url</span> ={" "}
-        <span className="tok-string">"https://kisan-commodity.onrender.com/api/mandi-prices"</span>{`\n`}
+        <span className="tok-string">"{baseUrl}/api/mandi-prices"</span>{`\n`}
         <span className="tok-variable">headers</span> = {"{"}{`\n`}
         {"    "}<span className="tok-string">"x-api-key"</span>:{" "}
         <span className="tok-string">"{apiKey}"</span>{`\n`}
@@ -185,7 +187,7 @@ export default function ApiDashboard() {
 
   const handleDownloadEnv = () => {
     const envContent = `# AgroBridge REST API Credentials
-AGROBRIDGE_API_URL=https://kisan-commodity.onrender.com/api/mandi-prices
+AGROBRIDGE_API_URL=${import.meta.env.VITE_API_BASE_URL}/api/mandi-prices
 AGROBRIDGE_API_KEY=${userApiKey}
 AGROBRIDGE_RESPONSE_FORMAT=${userData?.dataFormat || "JSON"}
 AGROBRIDGE_PLATFORM=${userData?.displayPlatform || "Portal"}
@@ -246,13 +248,13 @@ AGROBRIDGE_PLATFORM=${userData?.displayPlatform || "Portal"}
     setTestLoading(true);
     setTestResult(null);
     try {
-      const response = await fetch(`https://kisan-commodity.onrender.com/api/mandi-prices?api_key=${userApiKey}`);
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/mandi-prices?api_key=${userApiKey}`);
       const data = await response.json();
       setTestResult(data);
     } catch (err) {
       setTestResult({
         success: false,
-        message: "Failed to connect to API Server. Please ensure your API server is running at https://kisan-commodity.onrender.com.",
+        message: `Failed to connect to API Server. Please ensure your API server is running at ${import.meta.env.VITE_API_BASE_URL}.`,
         error: err.message
       });
     }
@@ -262,13 +264,13 @@ AGROBRIDGE_PLATFORM=${userData?.displayPlatform || "Portal"}
   // Code snippet templates
   const snippets = {
     curl: `curl -X GET \\
-  "https://kisan-commodity.onrender.com/api/mandi-prices?api_key=${userApiKey}" \\
+  "${baseUrl}/api/mandi-prices?api_key=${userApiKey}" \\
   -H "x-api-key: ${userApiKey}"`,
     
     javascript: `// Fetch Mandi Prices in React/Node.js
 const fetchMandiPrices = async () => {
   try {
-    const res = await fetch("https://kisan-commodity.onrender.com/api/mandi-prices", {
+    const res = await fetch("${baseUrl}/api/mandi-prices", {
       headers: {
         "x-api-key": "${userApiKey}"
       }
@@ -283,7 +285,7 @@ const fetchMandiPrices = async () => {
     python: `# Python Requests Implementation
 import requests
 
-url = "https://kisan-commodity.onrender.com/api/mandi-prices"
+url = "${baseUrl}/api/mandi-prices"
 headers = {
     "x-api-key": "${userApiKey}"
 }
@@ -481,7 +483,7 @@ except Exception as e:
               <span>Download .env</span>
             </button>
             <a 
-              href="https://kisan-commodity.onrender.com/api/health" 
+              href={`${import.meta.env.VITE_API_BASE_URL}/api/health`} 
               target="_blank" 
               rel="noreferrer"
               className="flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 px-7 py-4 rounded-2xl transition-all font-bold text-sm hover:scale-[1.03] active:scale-[0.97] cursor-pointer backdrop-blur-sm shadow-lg shadow-black/5"
