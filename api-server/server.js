@@ -25,6 +25,16 @@ try {
   db = admin.firestore();
   console.log('✅ Firebase Admin SDK initialized successfully!');
 
+  console.log("ENV exists:", !!process.env.FIREBASE_SERVICE_ACCOUNT);
+  console.log(
+    "Project ID:",
+    serviceAccount.project_id
+  );
+  console.log(
+    "Client Email:",
+    serviceAccount.client_email
+  );
+
   // Real-time API Cache to prevent Firestore read costs on root landing page
   global.apiStatsCache = {
     totalRecords: 969,
@@ -220,7 +230,6 @@ const syncGovApi = async () => {
     // 3. Fetch and write records in parallel batches for each date
     let batch = db.batch();
     let batchCount = 0;
-    const batchPromises = [];
     
     for (const dateStr of targetDates) {
       // Query direct date filter (limit=10000 is more than enough for a single day across India!)
@@ -266,7 +275,7 @@ const syncGovApi = async () => {
           recordsSynced++;
           
           if (batchCount === 500) {
-            batchPromises.push(batch.commit());
+            await batch.commit();
             batch = db.batch();
             batchCount = 0;
           }
@@ -277,6 +286,11 @@ const syncGovApi = async () => {
       
       // Short delay between date queries to prevent rate-limiting
       await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // Commit any remaining records in the last batch
+    if (batchCount > 0) {
+      await batch.commit();
     }
 
     // 4. Targeted sync for Lemons and Limes to guarantee 100% database coverage
@@ -291,7 +305,6 @@ const syncGovApi = async () => {
       
       let targetBatch = db.batch();
       let targetBatchCount = 0;
-      const targetPromises = [];
       
       for (const record of targetedRecords) {
         if (!record.market || !record.commodity || !record.arrival_date) continue;
@@ -316,28 +329,17 @@ const syncGovApi = async () => {
         recordsSynced++;
         
         if (targetBatchCount === 500) {
-          targetPromises.push(targetBatch.commit());
+          await targetBatch.commit();
           targetBatch = db.batch();
           targetBatchCount = 0;
         }
       }
       if (targetBatchCount > 0) {
-        targetPromises.push(targetBatch.commit());
+        await targetBatch.commit();
       }
-      await Promise.all(targetPromises);
       console.log(`🍋 Targeted Sync: successfully batch-wrote Lemon/Lime records.`);
     } catch (targetErr) {
       console.warn("⚠️ Targeted Lemon/Lime sync failed:", targetErr.message);
-    }
-    
-    // Commit any remaining records in the last batch
-    if (batchCount > 0) {
-      batchPromises.push(batch.commit());
-    }
-    
-    // Wait for all batch writes to execute in parallel
-    if (batchPromises.length > 0) {
-      await Promise.all(batchPromises);
     }
     
     // Save success log
@@ -349,7 +351,7 @@ const syncGovApi = async () => {
       error_message: null
     });
     
-    console.log(`✅ Gov API Sync finished successfully. Parallel batched ${recordsSynced} records in under 5 seconds!`);
+    console.log(`✅ Gov API Sync finished successfully. Batched ${recordsSynced} records!`);
     
     // Asynchronously update stats cache
     global.updateApiStatsCache().catch(err => console.warn('Background cache update error:', err.message));
@@ -1025,7 +1027,6 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
 
             let batch = db.batch();
             let batchCount = 0;
-            const promises = [];
 
             for (const record of combinedRecords) {
               if (!record.market || !record.commodity || !record.arrival_date) continue;
@@ -1049,15 +1050,14 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
               batchCount++;
 
               if (batchCount === 500) {
-                promises.push(batch.commit());
+                await batch.commit();
                 batch = db.batch();
                 batchCount = 0;
               }
             }
             if (batchCount > 0) {
-              promises.push(batch.commit());
+              await batch.commit();
             }
-            await Promise.all(promises);
             console.log(`✅ Background Cache: Successfully cached ${combinedRecords.length} live records to Firestore.`);
           } catch (cacheErr) {
             console.warn("⚠️ Background caching failed:", cacheErr.message);
