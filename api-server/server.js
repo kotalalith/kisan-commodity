@@ -1073,24 +1073,35 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
       let firestoreQuery = db.collection('mandiPrices');
       let hasFilter = false;
 
-      // Apply basic filters directly in Firestore to guarantee finding matching cached records (e.g. AP Lemons/Limes)
+      // Apply basic filters directly in Firestore to guarantee finding matching cached records
       if (req.query.state) {
-        firestoreQuery = firestoreQuery.where('state', '==', req.query.state);
+        const states = req.query.state.split(',').map(s => s.trim());
+        if (states.length === 1) {
+          firestoreQuery = firestoreQuery.where('state', '==', states[0]);
+        } else if (states.length <= 10) {
+          firestoreQuery = firestoreQuery.where('state', 'in', states);
+        }
         hasFilter = true;
       }
       
       if (req.query.commodity) {
-        const comm = req.query.commodity;
-        if (comm.toLowerCase() === 'lemon' || comm.toLowerCase() === 'lime') {
-          firestoreQuery = firestoreQuery.where('commodity', 'in', ['Lemon', 'Lime', 'lemon', 'lime', 'Lime APMC', 'LEMON', 'LIME']);
-        } else {
-          firestoreQuery = firestoreQuery.where('commodity', '==', comm);
+        const comms = req.query.commodity.split(',').map(c => c.trim());
+        if (comms.length === 1) {
+          const comm = comms[0];
+          if (comm.toLowerCase() === 'lemon' || comm.toLowerCase() === 'lime') {
+            firestoreQuery = firestoreQuery.where('commodity', 'in', ['Lemon', 'Lime', 'lemon', 'lime', 'Lime APMC', 'LEMON', 'LIME']);
+          } else {
+            firestoreQuery = firestoreQuery.where('commodity', '==', comm);
+          }
         }
         hasFilter = true;
       }
 
       if (req.query.market) {
-        firestoreQuery = firestoreQuery.where('market', '==', req.query.market);
+        const markets = req.query.market.split(',').map(m => m.trim());
+        if (markets.length === 1) {
+          firestoreQuery = firestoreQuery.where('market', '==', markets[0]);
+        }
         hasFilter = true;
       }
 
@@ -1137,15 +1148,7 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
 
     // 3. Group records by commodity + market to extract today's and yesterday's price
     // Note: To provide a clean, unique listing for the table, we group them first.
-    const groups = {};
-    combinedRecords.forEach(record => {
-      if (!record.commodity || !record.market) return;
-      const key = `${record.commodity.trim()}_${record.market.trim()}`;
-      if (!groups[key]) {
-        groups[key] = [];
-      }
-      groups[key].push(record);
-    });
+    let decoratedData = [];
 
     const parseDateHelper = (dateStr) => {
       if (!dateStr) return null;
@@ -1154,75 +1157,94 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
       return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
     };
 
-    const decoratedData = [];
-    Object.keys(groups).forEach(key => {
-      const groupItems = groups[key];
-      
-      // Sort chronologically descending (newest date first)
-      groupItems.sort((a, b) => {
-        const dA = parseDateHelper(a.arrival_date);
-        const dB = parseDateHelper(b.arrival_date);
-        if (!dA && !dB) return 0;
-        if (!dA) return 1;
-        if (!dB) return -1;
-        return dB - dA;
-      });
-
-      const todayItem = groupItems[0];
-      const yesterdayItem = groupItems[1];
-
-      const todayPrice = Number(todayItem.modal_price) || 0;
-      const yesterdayPrice = yesterdayItem ? (Number(yesterdayItem.modal_price) || 0) : null;
-
-      let dailyChangePercentage = 0;
-      if (yesterdayPrice && yesterdayPrice > 0) {
-        dailyChangePercentage = Number((((todayPrice - yesterdayPrice) / yesterdayPrice) * 100).toFixed(2));
-      } else {
-        const mspNum = Number(todayItem.min_price) || 0;
-        if (mspNum > 0) {
-          dailyChangePercentage = Number((((todayPrice - mspNum) / mspNum) * 100).toFixed(1));
+    if (req.query.grouped === 'true') {
+      const groups = {};
+      combinedRecords.forEach(record => {
+        if (!record.commodity || !record.market) return;
+        const key = `${record.commodity.trim()}_${record.market.trim()}`;
+        if (!groups[key]) {
+          groups[key] = [];
         }
-      }
-
-      decoratedData.push({
-        ...todayItem,
-        price: todayPrice,
-        min_price: Number(todayItem.min_price) || 0,
-        max_price: Number(todayItem.max_price) || 0,
-        yesterday_price: yesterdayPrice,
-        daily_change: yesterdayPrice ? (todayPrice - yesterdayPrice) : 0,
-        daily_change_percentage: dailyChangePercentage,
-        priceChange: dailyChangePercentage,
-        weekly_average: todayPrice,
-        weekly_trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
-        trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
-        status: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable"
+        groups[key].push(record);
       });
-    });
+
+      Object.keys(groups).forEach(key => {
+        const groupItems = groups[key];
+        
+        // Sort chronologically descending (newest date first)
+        groupItems.sort((a, b) => {
+          const dA = parseDateHelper(a.arrival_date);
+          const dB = parseDateHelper(b.arrival_date);
+          if (!dA && !dB) return 0;
+          if (!dA) return 1;
+          if (!dB) return -1;
+          return dB - dA;
+        });
+
+        const todayItem = groupItems[0];
+        const yesterdayItem = groupItems[1];
+
+        const todayPrice = Number(todayItem.modal_price) || 0;
+        const yesterdayPrice = yesterdayItem ? (Number(yesterdayItem.modal_price) || 0) : null;
+
+        let dailyChangePercentage = 0;
+        if (yesterdayPrice && yesterdayPrice > 0) {
+          dailyChangePercentage = Number((((todayPrice - yesterdayPrice) / yesterdayPrice) * 100).toFixed(2));
+        } else {
+          const mspNum = Number(todayItem.min_price) || 0;
+          if (mspNum > 0) {
+            dailyChangePercentage = Number((((todayPrice - mspNum) / mspNum) * 100).toFixed(1));
+          }
+        }
+
+        decoratedData.push({
+          ...todayItem,
+          price: todayPrice,
+          min_price: Number(todayItem.min_price) || 0,
+          max_price: Number(todayItem.max_price) || 0,
+          yesterday_price: yesterdayPrice,
+          daily_change: yesterdayPrice ? (todayPrice - yesterdayPrice) : 0,
+          daily_change_percentage: dailyChangePercentage,
+          priceChange: dailyChangePercentage,
+          weekly_average: todayPrice,
+          weekly_trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
+          trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
+          status: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable"
+        });
+      });
+    } else {
+      // For external developers using the API directly, return raw un-grouped data!
+      decoratedData = combinedRecords.map(item => ({
+        ...item,
+        price: Number(item.modal_price) || 0,
+        min_price: Number(item.min_price) || 0,
+        max_price: Number(item.max_price) || 0
+      }));
+    }
 
     // 4. Apply advanced search, filtering, and sorting in memory
     let finalData = decoratedData;
 
-    // Filter by State
+    // Filter by State (supports comma separated)
     if (req.query.state) {
-      const stateFilter = req.query.state.toLowerCase();
-      finalData = finalData.filter(r => r.state && r.state.toLowerCase() === stateFilter);
+      const stateFilters = req.query.state.toLowerCase().split(',').map(s => s.trim());
+      finalData = finalData.filter(r => r.state && stateFilters.includes(r.state.toLowerCase()));
     }
     
-    // Filter by Commodity (Empathy Mapping: Lemon and Lime are grouped together for ease of farming trade!)
+    // Filter by Commodity (supports comma separated)
     if (req.query.commodity) {
-      const commFilter = req.query.commodity.toLowerCase();
-      if (commFilter === 'lemon' || commFilter === 'lime') {
-        finalData = finalData.filter(r => r.commodity && (r.commodity.toLowerCase() === 'lemon' || r.commodity.toLowerCase() === 'lime'));
-      } else {
-        finalData = finalData.filter(r => r.commodity && r.commodity.toLowerCase() === commFilter);
+      const commFilters = req.query.commodity.toLowerCase().split(',').map(c => c.trim());
+      if (commFilters.includes('lemon') || commFilters.includes('lime')) {
+        if (!commFilters.includes('lemon')) commFilters.push('lemon');
+        if (!commFilters.includes('lime')) commFilters.push('lime');
       }
+      finalData = finalData.filter(r => r.commodity && commFilters.includes(r.commodity.toLowerCase()));
     }
 
-    // Filter by Market
+    // Filter by Market (supports comma separated)
     if (req.query.market) {
-      const marketFilter = req.query.market.toLowerCase();
-      finalData = finalData.filter(r => r.market && r.market.toLowerCase() === marketFilter);
+      const marketFilters = req.query.market.toLowerCase().split(',').map(m => m.trim());
+      finalData = finalData.filter(r => r.market && marketFilters.includes(r.market.toLowerCase()));
     }
 
     // Full-Text Search (Lemon/Lime smart expansion)
@@ -1270,7 +1292,7 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
     // 5. Pagination calculation
     const totalRecords = finalData.length;
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 50;
+    const limit = parseInt(req.query.limit, 10) || 10000; // Increased default limit to 10000 so developers get all data
     const totalPages = Math.ceil(totalRecords / limit) || 1;
     const paginatedData = finalData.slice((page - 1) * limit, page * limit);
 

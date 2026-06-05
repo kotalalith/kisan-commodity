@@ -1,6 +1,19 @@
 const API_KEY = "579b464db66ec23bdd00000141df70af670e4c686cc1d53adb2acf8e";
 const RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070";
 
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 3000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+};
+
 const generateStablePriceChange = (commodity, market) => {
   const str = `${commodity}-${market}`;
   let hash = 0;
@@ -19,6 +32,7 @@ export const fetchLiveMandiPrices = async (filters = {}, t) => {
     const params = new URLSearchParams();
     params.append('api_key', 'agro_secret_key_12345');
     params.append('limit', '1000');
+    params.append('grouped', 'true');
     if (filters.state && filters.state !== 'All States') {
       params.append('state', filters.state);
     }
@@ -33,7 +47,7 @@ export const fetchLiveMandiPrices = async (filters = {}, t) => {
     }
 
     const localUrl = `${import.meta.env.VITE_API_BASE_URL}/api/mandi-prices?${params.toString()}`;
-    const response = await fetch(localUrl);
+    const response = await fetchWithTimeout(localUrl);
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && json.data) {
@@ -175,7 +189,7 @@ export const fetchMandiHistory = async (commodity, market) => {
   // 1. Attempt to fetch from local server first
   try {
     const localUrl = `${import.meta.env.VITE_API_BASE_URL}/api/mandi-prices/history?api_key=agro_secret_key_12345&commodity=${encodeURIComponent(commodity)}&market=${encodeURIComponent(market)}`;
-    const response = await fetch(localUrl);
+    const response = await fetchWithTimeout(localUrl);
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && Array.isArray(json.data)) {
@@ -309,7 +323,7 @@ export const fetchMandiHistory = async (commodity, market) => {
 export const fetchMandiFilters = async () => {
   try {
     const localUrl = `${import.meta.env.VITE_API_BASE_URL}/api/mandi-filters?api_key=agro_secret_key_12345`;
-    const response = await fetch(localUrl);
+    const response = await fetchWithTimeout(localUrl);
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && json.data) {
