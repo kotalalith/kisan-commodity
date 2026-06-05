@@ -46,8 +46,9 @@ export const fetchLiveMandiPrices = async (filters = {}, t) => {
       params.append('search', filters.searchQuery);
     }
 
-    const localUrl = `${import.meta.env.VITE_API_BASE_URL}/api/mandi-prices?${params.toString()}`;
-    const response = await fetchWithTimeout(localUrl);
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://commodity.kisanetra.in';
+    const localUrl = `${baseUrl}/api/mandi-prices?${params.toString()}`;
+    const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && json.data) {
@@ -188,8 +189,9 @@ export const fetchMandiHistory = async (commodity, market) => {
   
   // 1. Attempt to fetch from local server first
   try {
-    const localUrl = `${import.meta.env.VITE_API_BASE_URL}/api/mandi-prices/history?api_key=agro_secret_key_12345&commodity=${encodeURIComponent(commodity)}&market=${encodeURIComponent(market)}`;
-    const response = await fetchWithTimeout(localUrl);
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://commodity.kisanetra.in';
+    const localUrl = `${baseUrl}/api/mandi-prices/history?api_key=agro_secret_key_12345&commodity=${encodeURIComponent(commodity)}&market=${encodeURIComponent(market)}`;
+    const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && Array.isArray(json.data)) {
@@ -322,8 +324,9 @@ export const fetchMandiHistory = async (commodity, market) => {
 
 export const fetchMandiFilters = async () => {
   try {
-    const localUrl = `${import.meta.env.VITE_API_BASE_URL}/api/mandi-filters?api_key=agro_secret_key_12345`;
-    const response = await fetchWithTimeout(localUrl);
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://commodity.kisanetra.in';
+    const localUrl = `${baseUrl}/api/mandi-filters?api_key=agro_secret_key_12345`;
+    const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && json.data) {

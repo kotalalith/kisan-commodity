@@ -1105,8 +1105,8 @@ app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
         hasFilter = true;
       }
 
-      // If there are no filters, we fetch up to 3000 records as cache fallback if live fetch returned 0
-      const limitVal = hasFilter ? 2000 : (combinedRecords.length === 0 ? 3000 : 0);
+      // Always fetch from cache as fallback to guarantee full data list
+      const limitVal = hasFilter ? 2000 : 3000;
 
       if (limitVal > 0) {
         const snapshot = await firestoreQuery.limit(limitVal).get();
