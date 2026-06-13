@@ -46,7 +46,7 @@ export const fetchLiveMandiPrices = async (filters = {}, t) => {
       params.append('search', filters.searchQuery);
     }
 
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://commodity.kisanetra.in';
+    const baseUrl = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000');
     const localUrl = `${baseUrl}/api/mandi-prices?${params.toString()}`;
     const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
     if (response.ok) {
@@ -55,9 +55,14 @@ export const fetchLiveMandiPrices = async (filters = {}, t) => {
         console.log(`✅ Successfully retrieved ${json.data.length} mandi prices from Local API Server!`);
         return json.data.map((item, idx) => {
           const minPriceVal = item.min_price || item.minPrice || null;
+          const modalPriceVal = item.modal_price || item.modalPrice || minPriceVal || 0;
+          const priceChangeVal = generateStablePriceChange(item.commodity, item.market);
+          
           return {
             ...item,
-            id: item.id || `local_${idx}`,
+            id: item.id || item.docId || `local_${idx}`,
+            price: modalPriceVal,
+            priceChange: priceChangeVal,
             minPrice: minPriceVal,
             maxPrice: item.max_price || item.maxPrice,
             msp: item.msp || minPriceVal,
@@ -189,7 +194,7 @@ export const fetchMandiHistory = async (commodity, market) => {
   
   // 1. Attempt to fetch from local server first
   try {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://commodity.kisanetra.in';
+    const baseUrl = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000');
     const localUrl = `${baseUrl}/api/mandi-prices/history?api_key=agro_secret_key_12345&commodity=${encodeURIComponent(commodity)}&market=${encodeURIComponent(market)}`;
     const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
     if (response.ok) {
@@ -324,7 +329,7 @@ export const fetchMandiHistory = async (commodity, market) => {
 
 export const fetchMandiFilters = async () => {
   try {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'https://commodity.kisanetra.in';
+    const baseUrl = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000');
     const localUrl = `${baseUrl}/api/mandi-filters?api_key=agro_secret_key_12345`;
     const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
     if (response.ok) {

@@ -1,16 +1,21 @@
 const express = require('express');
 const cors = require('cors');
-const admin = require('firebase-admin');
 const cron = require('node-cron');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
+const admin = require('firebase-admin');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize Firebase Admin SDK
-let db;
+// Import Mongoose Models
+const MandiPrice = require('./models/MandiPrice');
+const User = require('./models/User');
+const SyncLog = require('./models/SyncLog');
+
+// Initialize Firebase Admin SDK ONLY for FCM Notifications
 try {
   let serviceAccount;
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
@@ -22,94 +27,75 @@ try {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
-  db = admin.firestore();
-  console.log('✅ Firebase Admin SDK initialized successfully!');
-
-  console.log("ENV exists:", !!process.env.FIREBASE_SERVICE_ACCOUNT);
-  console.log(
-    "Project ID:",
-    serviceAccount.project_id
-  );
-  console.log(
-    "Client Email:",
-    serviceAccount.client_email
-  );
-
-  // Real-time API Cache to prevent Firestore read costs on root landing page
-  global.apiStatsCache = {
-    totalRecords: 969,
-    statesCount: 4,
-    commoditiesCount: 6,
-    lastSync: '2026-05-26 13:08 PM',
-    lastSyncStatus: 'success'
-  };
-
-  global.filterCache = {
-    states: [],
-    commodities: [],
-    markets: []
-  };
-
-  global.updateApiStatsCache = async () => {
-    try {
-      const snapshot = await db.collection('mandiPrices').select('state', 'commodity', 'market').get();
-      const states = new Set();
-      const commodities = new Set();
-      const markets = new Set();
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        if (data.state) states.add(data.state);
-        if (data.commodity) commodities.add(data.commodity);
-        if (data.market) markets.add(data.market);
-      });
-      
-      global.filterCache = {
-        states: [...states].sort(),
-        commodities: [...commodities].sort(),
-        markets: [...markets].sort()
-      };
-      
-      global.apiStatsCache.totalRecords = snapshot.size;
-      global.apiStatsCache.statesCount = states.size || 4;
-      global.apiStatsCache.commoditiesCount = commodities.size || 6;
-      
-      // Get last sync log
-      const syncLogsSnapshot = await db.collection('syncLogs')
-        .orderBy('triggered_at', 'desc')
-        .limit(1)
-        .get();
-      if (!syncLogsSnapshot.empty) {
-        const logData = syncLogsSnapshot.docs[0].data();
-        const completedAt = logData.completed_at;
-        global.apiStatsCache.lastSync = completedAt ? (completedAt.toDate ? completedAt.toDate().toLocaleString() : new Date(completedAt).toLocaleString()) : 'Never';
-        global.apiStatsCache.lastSyncStatus = logData.status || 'Unknown';
-      }
-      console.log('📊 API Stats cache updated successfully:', global.apiStatsCache);
-    } catch (err) {
-      console.warn('⚠️ Could not update API Stats cache:', err.message);
-    }
-  };
-
-  // Run initial cache update asynchronously
-  setTimeout(() => {
-    global.updateApiStatsCache().catch(err => console.warn('Startup stats update warning:', err.message));
-  }, 1000);
+  console.log('✅ Firebase Admin SDK (FCM) initialized successfully!');
 } catch (error) {
-  console.error('❌ Error initializing Firebase Admin SDK. Please make sure you downloaded serviceAccountKey.json and placed it in the api-server directory.');
-  console.error('Error Details:', error.message);
-  process.exit(1);
+  console.error('⚠️ Firebase Admin (FCM) initialization skipped or failed:', error.message);
 }
 
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => {
+    console.log('✅ MongoDB connected successfully!');
+    // Initialize stats cache asynchronously after DB connects
+    setTimeout(() => {
+      global.updateApiStatsCache().catch(err => console.warn('Startup stats update warning:', err.message));
+    }, 1000);
+  })
+  .catch((error) => {
+    console.error('❌ MongoDB connection error:', error.message);
+  });
+
+// Real-time API Cache
+global.apiStatsCache = {
+  totalRecords: 0,
+  statesCount: 0,
+  commoditiesCount: 0,
+  lastSync: 'Never',
+  lastSyncStatus: 'unknown'
+};
+
+global.filterCache = {
+  states: [],
+  commodities: [],
+  markets: []
+};
+
+global.updateApiStatsCache = async () => {
+  try {
+    const states = await MandiPrice.distinct('state');
+    const commodities = await MandiPrice.distinct('commodity');
+    const markets = await MandiPrice.distinct('market');
+
+    global.filterCache = {
+      states: states.sort(),
+      commodities: commodities.sort(),
+      markets: markets.sort()
+    };
+
+    global.apiStatsCache.totalRecords = await MandiPrice.countDocuments();
+    global.apiStatsCache.statesCount = states.length;
+    global.apiStatsCache.commoditiesCount = commodities.length;
+
+    const lastSyncLog = await SyncLog.findOne().sort({ triggered_at: -1 });
+    if (lastSyncLog) {
+      global.apiStatsCache.lastSync = new Date(lastSyncLog.completed_at).toLocaleString();
+      global.apiStatsCache.lastSyncStatus = lastSyncLog.status;
+    }
+    console.log('📊 API Stats cache updated successfully:', global.apiStatsCache);
+  } catch (err) {
+    console.warn('⚠️ Could not update API Stats cache:', err.message);
+  }
+};
+
 // Allowed API Keys (loaded from environment variables, fallback to a default key for testing)
-const VALID_API_KEYS = process.env.API_KEYS 
-  ? process.env.API_KEYS.split(',') 
+const VALID_API_KEYS = process.env.API_KEYS
+  ? process.env.API_KEYS.split(',')
   : ['agro_secret_key_12345'];
 
-// Middleware to authorize requests using API Key (dynamically checks Firestore)
+// Middleware to authorize requests using API Key
 const requireApiKey = async (req, res, next) => {
-  // Check for API key in the headers or query parameters
   const apiKey = req.headers['x-api-key'] || req.query.api_key;
-  
+
   if (!apiKey) {
     return res.status(401).json({
       success: false,
@@ -117,50 +103,36 @@ const requireApiKey = async (req, res, next) => {
     });
   }
 
-  // 1. Fallback to hardcoded testing/admin keys in VALID_API_KEYS
+  // Fallback to hardcoded testing/admin keys in VALID_API_KEYS
   if (VALID_API_KEYS.includes(apiKey)) {
     return next();
   }
-  
-  // 2. Query Firestore users collection for matching approved API key
+
+  // Query MongoDB users collection
   try {
-    const snapshot = await db.collection('users')
-      .where('apiKey', '==', apiKey)
-      .where('status', '==', 'approved')
-      .limit(1)
-      .get();
-      
-    if (!snapshot.empty) {
-      const userDoc = snapshot.docs[0];
-      const userData = userDoc.data();
-      
-      // Feature 4: check usage_today limit (>= 100)
-      if (userData.usage_today >= 100) {
+    const userDoc = await User.findOne({ apiKey: apiKey, status: 'approved' });
+
+    if (userDoc) {
+      if (userDoc.usage_today >= 100) {
         return res.status(429).json({
           success: false,
           message: 'Daily limit reached. Upgrade your plan.'
         });
       }
-      
-      // Feature 4: increment usage_today and usage_total
-      await userDoc.ref.update({
-        usage_today: admin.firestore.FieldValue.increment(1),
-        usage_total: admin.firestore.FieldValue.increment(1)
-      });
-      
-      // Store authorized user details on request context
-      req.apiUser = { 
-        ...userData, 
-        usage_today: (userData.usage_today || 0) + 1, 
-        usage_total: (userData.usage_total || 0) + 1 
-      };
+
+      // Increment usage
+      userDoc.usage_today += 1;
+      userDoc.usage_total += 1;
+      await userDoc.save();
+
+      req.apiUser = userDoc.toObject();
       return next();
     }
   } catch (error) {
-    console.warn('⚠️ Firestore key validation skipped (Offline Sandbox Bypass Mode):', error.message);
+    console.warn('⚠️ MongoDB key validation error:', error.message);
   }
 
-  // 3. Resilient Fallback: Authorize any sandbox generated key starting with agro_live_
+  // Offline Sandbox Bypass Mode
   if (apiKey && typeof apiKey === 'string' && apiKey.startsWith('agro_live_')) {
     console.log('✅ Authorized key in offline sandbox mode:', apiKey);
     req.apiUser = { name: "Offline Sandbox Client", organization: "Offline Bypass" };
@@ -178,40 +150,33 @@ const requireApiKey = async (req, res, next) => {
 const GOVT_API_KEY = process.env.GOVT_API_KEY || "579b464db66ec23bdd00000141df70af670e4c686cc1d53adb2acf8e";
 const RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070";
 
-// Helper function to slugify text for document IDs
 const slugify = (text) => {
   if (!text) return '';
   return text
     .toString()
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, '_')           // Replace spaces with _
-    .replace(/[^a-z0-9_-]/g, '_')   // Replace special characters with _
-    .replace(/__+/g, '_')           // Replace multiple _ with single _
-    .replace(/^_+|_+$/g, '');        // Trim leading and trailing _
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_-]/g, '_')
+    .replace(/__+/g, '_')
+    .replace(/^_+|_+$/g, '');
 };
 
-// FEATURE 1 — Scheduled Gov API Sync (Highly Optimized Parallel Date-Based Sync)
+const parseDateHelper = (dateStr) => {
+  if (!dateStr) return null;
+  const parts = dateStr.split('/');
+  if (parts.length !== 3) return null;
+  return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+};
+
+// FEATURE 1 — Scheduled Gov API Sync with Bulk Upsert
 const syncGovApi = async () => {
   const triggeredAt = new Date();
   let recordsSynced = 0;
-  
-  console.log(`🚀 Starting High-Performance Date-Based Gov API Sync at ${triggeredAt.toISOString()}...`);
-  
-  try {
-    // 1. Retrieve all manual records once to protect them from overwrites
-    const manualIds = new Set();
-    try {
-      const manualSnapshot = await db.collection('mandiPrices').where('source', '==', 'manual').get();
-      manualSnapshot.forEach(doc => {
-        manualIds.add(doc.id);
-      });
-      console.log(`ℹ️ Protected: Loaded ${manualIds.size} manual source records from Firestore.`);
-    } catch (manualErr) {
-      console.warn('⚠️ Could not load manual records for protection:', manualErr.message);
-    }
 
-    // 2. Construct target dates for the last 5 days
+  console.log(`🚀 Starting MongoDB Gov API Sync at ${triggeredAt.toISOString()}...`);
+
+  try {
     const targetDates = [];
     const baseDate = new Date();
     for (let i = 0; i < 5; i++) {
@@ -225,198 +190,104 @@ const syncGovApi = async () => {
       targetDates.push(`${dayStr}/${monthStr}/${year}`);
     }
 
-    console.log(`📅 Target Sync Dates:`, targetDates);
-
-    // 3. Fetch and write records in parallel batches for each date
-    let batch = db.batch();
-    let batchCount = 0;
-    
     for (const dateStr of targetDates) {
-      // Query direct date filter (limit=10000 is more than enough for a single day across India!)
       const url = `https://api.data.gov.in/resource/${RESOURCE_ID}?api-key=${GOVT_API_KEY}&format=json&limit=10000&filters[arrival_date]=${dateStr}`;
       try {
         const response = await fetch(url);
-        if (!response.ok) {
-          console.warn(`⚠️ Gov API returned status ${response.status} for date ${dateStr}`);
-          continue;
-        }
-        
+        if (!response.ok) continue;
+
         const json = await response.json();
         const records = json.records || [];
-        console.log(`📄 Date ${dateStr}: Fetched ${records.length} records. Batching...`);
-        
-        for (const record of records) {
-          if (!record.market || !record.commodity || !record.arrival_date) {
-            continue;
-          }
-          
-          const docId = `${slugify(record.market)}_${slugify(record.commodity)}_${slugify(record.arrival_date)}_gov`;
-          
-          if (manualIds.has(docId)) {
-            continue;
-          }
-          
-          const docRef = db.collection('mandiPrices').doc(docId);
-          batch.set(docRef, {
-            state: record.state || '',
-            district: record.district || '',
-            market: record.market || '',
-            commodity: record.commodity || '',
-            variety: record.variety || '',
-            min_price: record.min_price ? Number(record.min_price) : 0,
-            max_price: record.max_price ? Number(record.max_price) : 0,
-            modal_price: record.modal_price ? Number(record.modal_price) : 0,
-            arrival_date: record.arrival_date || '',
-            source: 'gov',
-            last_synced: admin.firestore.FieldValue.serverTimestamp()
-          });
-          
-          batchCount++;
-          recordsSynced++;
-          
-          if (batchCount === 500) {
-            await batch.commit();
-            batch = db.batch();
-            batchCount = 0;
+        console.log(`📄 Date ${dateStr}: Fetched ${records.length} records. Writing to MongoDB...`);
+
+        if (records.length > 0) {
+          const bulkOps = records.map(record => {
+            if (!record.market || !record.commodity || !record.arrival_date) return null;
+
+            const docId = `${slugify(record.market)}_${slugify(record.commodity)}_${slugify(record.arrival_date)}_gov`;
+            const parsed_date = parseDateHelper(record.arrival_date) || new Date();
+
+            return {
+              updateOne: {
+                filter: { docId: docId },
+                update: {
+                  $set: {
+                    state: record.state || '',
+                    district: record.district || '',
+                    market: record.market || '',
+                    commodity: record.commodity || '',
+                    variety: record.variety || '',
+                    min_price: record.min_price ? Number(record.min_price) : 0,
+                    max_price: record.max_price ? Number(record.max_price) : 0,
+                    modal_price: record.modal_price ? Number(record.modal_price) : 0,
+                    arrival_date: record.arrival_date || '',
+                    parsed_date: parsed_date,
+                    source: 'gov',
+                    last_synced: new Date()
+                  }
+                },
+                upsert: true
+              }
+            };
+          }).filter(op => op !== null);
+
+          if (bulkOps.length > 0) {
+            await MandiPrice.bulkWrite(bulkOps, { ordered: false });
+            recordsSynced += bulkOps.length;
           }
         }
       } catch (fetchErr) {
         console.warn(`⚠️ Fetch failed for date ${dateStr}:`, fetchErr.message);
       }
-      
-      // Short delay between date queries to prevent rate-limiting
+
       await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Commit any remaining records in the last batch
-    if (batchCount > 0) {
-      await batch.commit();
-    }
+    // Auto-cleanup 90 days older data
+    console.log("🧹 Running 90-day auto-cleanup...");
+    const cleanupDate = new Date();
+    cleanupDate.setDate(cleanupDate.getDate() - 90);
+    const deleteResult = await MandiPrice.deleteMany({ parsed_date: { $lt: cleanupDate } });
+    console.log(`🧹 Deleted ${deleteResult.deletedCount} old records to save storage!`);
 
-    // 4. Targeted sync for Lemons and Limes to guarantee 100% database coverage
-    console.log("🍋 Targeted Sync: Retrieving Lemon and Lime crop records from Government API...");
-    try {
-      const [resLemon, resLime] = await Promise.all([
-        fetch(`https://api.data.gov.in/resource/${RESOURCE_ID}?api-key=${GOVT_API_KEY}&format=json&limit=1000&filters[commodity]=Lemon`).then(r => r.ok ? r.json() : { records: [] }),
-        fetch(`https://api.data.gov.in/resource/${RESOURCE_ID}?api-key=${GOVT_API_KEY}&format=json&limit=1000&filters[commodity]=Lime`).then(r => r.ok ? r.json() : { records: [] })
-      ]);
-      const targetedRecords = [...(resLemon.records || []), ...(resLime.records || [])];
-      console.log(`🍋 Targeted Sync: Retrieved ${targetedRecords.length} Lemon/Lime records.`);
-      
-      let targetBatch = db.batch();
-      let targetBatchCount = 0;
-      
-      for (const record of targetedRecords) {
-        if (!record.market || !record.commodity || !record.arrival_date) continue;
-        const docId = `${slugify(record.market)}_${slugify(record.commodity)}_${slugify(record.arrival_date)}_gov`;
-        if (manualIds.has(docId)) continue;
-        
-        const docRef = db.collection('mandiPrices').doc(docId);
-        targetBatch.set(docRef, {
-          state: record.state || '',
-          district: record.district || '',
-          market: record.market || '',
-          commodity: record.commodity || '',
-          variety: record.variety || '',
-          min_price: record.min_price ? Number(record.min_price) : 0,
-          max_price: record.max_price ? Number(record.max_price) : 0,
-          modal_price: record.modal_price ? Number(record.modal_price) : 0,
-          arrival_date: record.arrival_date || '',
-          source: 'gov',
-          last_synced: admin.firestore.FieldValue.serverTimestamp()
-        });
-        targetBatchCount++;
-        recordsSynced++;
-        
-        if (targetBatchCount === 500) {
-          await targetBatch.commit();
-          targetBatch = db.batch();
-          targetBatchCount = 0;
-        }
-      }
-      if (targetBatchCount > 0) {
-        await targetBatch.commit();
-      }
-      console.log(`🍋 Targeted Sync: successfully batch-wrote Lemon/Lime records.`);
-    } catch (targetErr) {
-      console.warn("⚠️ Targeted Lemon/Lime sync failed:", targetErr.message);
-    }
-    
-    // Save success log
-    await db.collection('syncLogs').add({
+    await SyncLog.create({
       triggered_at: triggeredAt,
       completed_at: new Date(),
       records_synced: recordsSynced,
-      status: 'success',
-      error_message: null
+      status: 'success'
     });
-    
-    console.log(`✅ Gov API Sync finished successfully. Batched ${recordsSynced} records!`);
-    
-    // Asynchronously update stats cache
+
+    console.log(`✅ Gov API Sync finished successfully. Synced ${recordsSynced} records!`);
+
     global.updateApiStatsCache().catch(err => console.warn('Background cache update error:', err.message));
   } catch (error) {
     console.error('❌ Gov API Sync failed:', error.message);
-    
-    try {
-      await db.collection('syncLogs').add({
-        triggered_at: triggeredAt,
-        completed_at: new Date(),
-        records_synced: recordsSynced,
-        status: 'failed',
-        error_message: error.message
-      });
-    } catch (logError) {
-      console.error('❌ Failed to save sync failure log:', logError.message);
-    }
+    await SyncLog.create({
+      triggered_at: triggeredAt,
+      completed_at: new Date(),
+      records_synced: recordsSynced,
+      status: 'failed',
+      error_message: error.message
+    });
   }
 };
 
-// Sync 5 times daily: 6AM, 10AM, 1PM, 4PM, 9PM IST
 cron.schedule('0 6,10,13,16,21 * * *', () => {
   syncGovApi().catch(err => console.error("Cron Gov API sync background error:", err));
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+}, { scheduled: true, timezone: "Asia/Kolkata" });
 
-// FEATURE 5 — Daily midnight usage reset
 const resetDailyUsage = async () => {
-  console.log('🔄 Running daily usage reset at midnight IST...');
   try {
-    const snapshot = await db.collection('users').get();
-    if (snapshot.empty) return;
-    
-    let batch = db.batch();
-    let count = 0;
-    
-    for (const doc of snapshot.docs) {
-      batch.update(doc.ref, { usage_today: 0 });
-      count++;
-      
-      if (count === 500) {
-        await batch.commit();
-        batch = db.batch();
-        count = 0;
-      }
-    }
-    
-    if (count > 0) {
-      await batch.commit();
-    }
+    await User.updateMany({}, { $set: { usage_today: 0 } });
     console.log('✅ Daily usage reset completed successfully.');
   } catch (error) {
     console.error('❌ Error resetting daily usage:', error);
   }
 };
 
-// Cron schedule at 12:00 AM midnight IST daily
 cron.schedule('0 0 * * *', () => {
   resetDailyUsage().catch(err => console.error("Cron usage reset background error:", err));
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+}, { scheduled: true, timezone: "Asia/Kolkata" });
 
 const generateStablePriceChange = (commodity, market) => {
   const str = `${commodity}-${market}`;
@@ -430,17 +301,253 @@ const generateStablePriceChange = (commodity, market) => {
   return Number((normalized * 10 - 5).toFixed(1));
 };
 
-const getTodayDateString = () => {
-  const today = new Date();
-  const day = today.getDate();
-  const month = today.getMonth() + 1;
-  const year = today.getFullYear();
-  const dayStr = day < 10 ? `0${day}` : `${day}`;
-  const monthStr = month < 10 ? `0${month}` : `${month}`;
-  return `${dayStr}/${monthStr}/${year}`;
-};
+app.get('/api/mandi-filters', async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: global.filterCache || { states: [], commodities: [], markets: [] }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
-// GET / (Developer Portal & API Interactive Console)
+app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
+  try {
+    let firestoreQuery = {};
+    if (req.query.state) {
+      const states = req.query.state.split(',').map(s => s.trim());
+      firestoreQuery.state = { $in: states.map(s => new RegExp('^' + s + '$', 'i')) };
+    }
+
+    if (req.query.commodity) {
+      const comms = req.query.commodity.split(',').map(c => c.trim());
+      firestoreQuery.commodity = { $in: comms.map(s => new RegExp('^' + s + '$', 'i')) };
+    }
+
+    if (req.query.market) {
+      const markets = req.query.market.split(',').map(m => m.trim());
+      firestoreQuery.market = { $in: markets.map(s => new RegExp('^' + s + '$', 'i')) };
+    }
+
+    if (req.query.search) {
+      const searchQ = req.query.search.toLowerCase();
+      firestoreQuery.$or = [
+        { commodity: new RegExp(searchQ, 'i') },
+        { market: new RegExp(searchQ, 'i') },
+        { state: new RegExp(searchQ, 'i') },
+        { district: new RegExp(searchQ, 'i') }
+      ];
+    }
+
+    // Fetch the matched records from MongoDB
+    let dbRecords = await MandiPrice.find(firestoreQuery)
+      .sort({ parsed_date: -1 })
+      .limit(3000)
+      .lean();
+
+    // The rest is grouping and calculating changes
+    let decoratedData = [];
+    if (req.query.grouped === 'true') {
+      const groups = {};
+      dbRecords.forEach(record => {
+        if (!record.commodity || !record.market) return;
+        const key = `${record.commodity.trim()}_${record.market.trim()}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(record);
+      });
+
+      Object.keys(groups).forEach(key => {
+        const groupItems = groups[key];
+        const todayItem = groupItems[0];
+        const yesterdayItem = groupItems[1];
+
+        const todayPrice = Number(todayItem.modal_price) || 0;
+        const yesterdayPrice = yesterdayItem ? (Number(yesterdayItem.modal_price) || 0) : null;
+
+        let dailyChangePercentage = 0;
+        if (yesterdayPrice && yesterdayPrice > 0) {
+          dailyChangePercentage = Number((((todayPrice - yesterdayPrice) / yesterdayPrice) * 100).toFixed(2));
+        } else {
+          const mspNum = Number(todayItem.min_price) || 0;
+          if (mspNum > 0) {
+            dailyChangePercentage = Number((((todayPrice - mspNum) / mspNum) * 100).toFixed(1));
+          }
+        }
+
+        decoratedData.push({
+          ...todayItem,
+          price: todayPrice,
+          min_price: Number(todayItem.min_price) || 0,
+          max_price: Number(todayItem.max_price) || 0,
+          yesterday_price: yesterdayPrice,
+          daily_change: yesterdayPrice ? (todayPrice - yesterdayPrice) : 0,
+          daily_change_percentage: dailyChangePercentage,
+          priceChange: dailyChangePercentage,
+          weekly_average: todayPrice,
+          weekly_trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
+          trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
+          status: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable"
+        });
+      });
+    } else {
+      decoratedData = dbRecords.map(item => ({
+        ...item,
+        price: Number(item.modal_price) || 0,
+        min_price: Number(item.min_price) || 0,
+        max_price: Number(item.max_price) || 0
+      }));
+    }
+
+    const totalRecords = decoratedData.length;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10000;
+    const totalPages = Math.ceil(totalRecords / limit) || 1;
+    const paginatedData = decoratedData.slice((page - 1) * limit, page * limit);
+
+    res.json({
+      success: true,
+      source: "agmarknet.gov.in",
+      last_synced: global.apiStatsCache.lastSync,
+      pagination: {
+        total_records: totalRecords,
+        page: page,
+        limit: limit,
+        total_pages: totalPages
+      },
+      data: paginatedData
+    });
+  } catch (error) {
+    console.error('Error fetching Mandi prices:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal Server Error: Failed to fetch data.',
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/mandi-prices/history', requireApiKey, async (req, res) => {
+  try {
+    const { commodity, market, from, to } = req.query;
+    if (!commodity || !market) {
+      return res.status(400).json({ success: false, message: "commodity and market are required" });
+    }
+
+    let parsedTo = to ? parseDateHelper(to) : new Date();
+    let parsedFrom = from ? parseDateHelper(from) : new Date();
+    if (!from) {
+      parsedFrom.setDate(parsedTo.getDate() - 90);
+    }
+
+    let query = {
+      commodity: new RegExp('^' + commodity + '$', 'i'),
+      market: new RegExp('^' + market + '$', 'i'),
+      parsed_date: { $gte: parsedFrom, $lte: parsedTo }
+    };
+
+    let data = await MandiPrice.find(query).sort({ parsed_date: 1 }).lean();
+
+    let actualCommodity = commodity;
+    let actualMarket = market;
+
+    if (data.length > 0) {
+      actualCommodity = data[0].commodity;
+      actualMarket = data[0].market;
+    } else {
+      // Mock Data Generation
+      const daysToGenerate = 90;
+      const baseDate = parsedTo;
+      let basePrice = 2000;
+      const lowerComm = commodity.toLowerCase();
+      if (lowerComm.includes('rice')) basePrice = 2050;
+      else if (lowerComm.includes('chilli')) basePrice = 18000;
+      else if (lowerComm.includes('cotton')) basePrice = 7200;
+      else if (lowerComm.includes('wheat')) basePrice = 2450;
+
+      for (let i = daysToGenerate - 1; i >= 0; i--) {
+        const currentDate = new Date(baseDate);
+        currentDate.setDate(baseDate.getDate() - i);
+        const dayStr = String(currentDate.getDate()).padStart(2, '0');
+        const monthStr = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const arrival_date = `${dayStr}/${monthStr}/${currentDate.getFullYear()}`;
+
+        const priceChange = generateStablePriceChange(commodity, market) * (i - 45) * 0.4;
+        const modal_price = Math.round(basePrice + priceChange);
+        data.push({
+          arrival_date,
+          min_price: Math.round(modal_price * 0.92),
+          max_price: Math.round(modal_price * 1.08),
+          modal_price
+        });
+      }
+    }
+
+    let analytics = null;
+    if (data.length > 0) {
+      const modalPrices = data.map(item => item.modal_price);
+      const totalModal = modalPrices.reduce((sum, val) => sum + val, 0);
+      const oldestPrice = data[0].modal_price;
+      const newestPrice = data[data.length - 1].modal_price;
+      const priceChangePercentage = oldestPrice > 0 ? Number((((newestPrice - oldestPrice) / oldestPrice) * 100).toFixed(2)) : 0;
+
+      analytics = {
+        average_modal_price: Math.round(totalModal / data.length),
+        highest_price: Math.max(...modalPrices),
+        lowest_price: Math.min(...modalPrices),
+        price_change: newestPrice - oldestPrice,
+        price_change_percentage: priceChangePercentage,
+        trend: priceChangePercentage > 1 ? "Bullish" : priceChangePercentage < -1 ? "Bearish" : "Stable"
+      };
+    }
+
+    res.json({
+      success: true,
+      commodity: actualCommodity,
+      market: actualMarket,
+      from: from,
+      to: to,
+      count: data.length,
+      analytics,
+      data: data.map(d => ({
+        arrival_date: d.arrival_date,
+        min_price: d.min_price,
+        max_price: d.max_price,
+        modal_price: d.modal_price
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Internal Server Error', error: error.message });
+  }
+});
+
+app.post('/api/keys/generate', async (req, res) => {
+  const { email, app_name } = req.body;
+  if (!email || !app_name) return res.status(400).json({ success: false, message: "Required" });
+
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let randomPart = '';
+  for (let i = 0; i < 24; i++) randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+  const apiKey = `agro_live_${randomPart}`;
+
+  try {
+    await User.create({ email, appName: app_name, apiKey });
+    res.json({ success: true, api_key: apiKey });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to generate key', error: error.message });
+  }
+});
+
+app.post('/api/admin/sync', async (req, res) => {
+  const adminKey = req.headers['x-admin-key'];
+  if (!adminKey || adminKey !== (process.env.ADMIN_KEY || 'kisanetra_admin_2026')) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+  syncGovApi().catch(err => console.error(err));
+  res.json({ success: true, message: "Sync started in background" });
+});
+
+// GET / Developer Console Page
 app.get('/', (req, res) => {
   const stats = global.apiStatsCache || {
     totalRecords: 969,
@@ -971,718 +1078,9 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Get distinct states, commodities, and markets available for filtering
-app.get('/api/mandi-filters', async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      data: global.filterCache || { states: [], commodities: [], markets: [] }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
-// 1. Get all Mandi Prices (Protected, supports search, pagination, custom filters, and sorting)
-app.get('/api/mandi-prices', requireApiKey, async (req, res) => {
-  try {
-    let combinedRecords = []; // 1. Fetch live records for Today and Yesterday in parallel!
-    let lastSynced = new Date().toISOString();
-    try {
-      const getTodayString = (offsetDays = 0) => {
-        const d = new Date();
-        d.setDate(d.getDate() - offsetDays);
-        const day = d.getDate();
-        const month = d.getMonth() + 1;
-        const year = d.getFullYear();
-        const dayStr = day < 10 ? `0${day}` : `${day}`;
-        const monthStr = month < 10 ? `0${month}` : `${month}`;
-        return `${dayStr}/${monthStr}/${year}`;
-      };
-
-      const todayStr = getTodayString(0);
-      const yesterdayStr = getTodayString(1);
-
-      console.log(`🚀 Live Fetch: Querying parallel date feeds for ${todayStr} and ${yesterdayStr}...`);
-
-      const [resToday, resYesterday] = await Promise.all([
-        fetch(`https://api.data.gov.in/resource/${RESOURCE_ID}?api-key=${GOVT_API_KEY}&format=json&limit=10000&filters[arrival_date]=${todayStr}`).then(r => r.ok ? r.json() : { records: [] }).catch(() => ({ records: [] })),
-        fetch(`https://api.data.gov.in/resource/${RESOURCE_ID}?api-key=${GOVT_API_KEY}&format=json&limit=10000&filters[arrival_date]=${yesterdayStr}`).then(r => r.ok ? r.json() : { records: [] }).catch(() => ({ records: [] }))
-      ]);
-
-      const recordsToday = resToday.records || [];
-      const recordsYesterday = resYesterday.records || [];
-      combinedRecords = [...recordsToday, ...recordsYesterday];
-      
-      console.log(`🚀 Live Fetch: Retrieved ${recordsToday.length} today, ${recordsYesterday.length} yesterday. Total: ${combinedRecords.length} records.`);
-      
-      if (combinedRecords.length > 0) {
-        // Cache them in Firestore in the background using optimized parallel batch writes
-        setTimeout(async () => {
-          try {
-            // Retrieve manual records
-            const manualSnapshot = await db.collection('mandiPrices').where('source', '==', 'manual').get();
-            const manualIds = new Set();
-            manualSnapshot.forEach(doc => manualIds.add(doc.id));
-
-            let batch = db.batch();
-            let batchCount = 0;
-
-            for (const record of combinedRecords) {
-              if (!record.market || !record.commodity || !record.arrival_date) continue;
-              const docId = `${slugify(record.market)}_${slugify(record.commodity)}_${slugify(record.arrival_date)}_gov`;
-              if (manualIds.has(docId)) continue;
-
-              const docRef = db.collection('mandiPrices').doc(docId);
-              batch.set(docRef, {
-                state: record.state || '',
-                district: record.district || '',
-                market: record.market || '',
-                commodity: record.commodity || '',
-                variety: record.variety || '',
-                min_price: record.min_price ? Number(record.min_price) : 0,
-                max_price: record.max_price ? Number(record.max_price) : 0,
-                modal_price: record.modal_price ? Number(record.modal_price) : 0,
-                arrival_date: record.arrival_date || '',
-                source: 'gov',
-                last_synced: admin.firestore.FieldValue.serverTimestamp()
-              });
-              batchCount++;
-
-              if (batchCount === 500) {
-                await batch.commit();
-                batch = db.batch();
-                batchCount = 0;
-              }
-            }
-            if (batchCount > 0) {
-              await batch.commit();
-            }
-            console.log(`✅ Background Cache: Successfully cached ${combinedRecords.length} live records to Firestore.`);
-          } catch (cacheErr) {
-            console.warn("⚠️ Background caching failed:", cacheErr.message);
-          }
-        }, 100);
-      }
-    } catch (govError) {
-      console.warn("⚠️ Direct Government API fetch failed:", govError.message);
-    }
-
-    // 2. Query Firestore database for matching cached records and MERGE them!
-    try {
-      let firestoreQuery = db.collection('mandiPrices');
-      let hasFilter = false;
-
-      // Apply basic filters directly in Firestore to guarantee finding matching cached records
-      if (req.query.state) {
-        const states = req.query.state.split(',').map(s => s.trim());
-        if (states.length === 1) {
-          firestoreQuery = firestoreQuery.where('state', '==', states[0]);
-        } else if (states.length <= 10) {
-          firestoreQuery = firestoreQuery.where('state', 'in', states);
-        }
-        hasFilter = true;
-      }
-      
-      if (req.query.commodity) {
-        const comms = req.query.commodity.split(',').map(c => c.trim());
-        if (comms.length === 1) {
-          const comm = comms[0];
-          if (comm.toLowerCase() === 'lemon' || comm.toLowerCase() === 'lime') {
-            firestoreQuery = firestoreQuery.where('commodity', 'in', ['Lemon', 'Lime', 'lemon', 'lime', 'Lime APMC', 'LEMON', 'LIME']);
-          } else {
-            firestoreQuery = firestoreQuery.where('commodity', '==', comm);
-          }
-        }
-        hasFilter = true;
-      }
-
-      if (req.query.market) {
-        const markets = req.query.market.split(',').map(m => m.trim());
-        if (markets.length === 1) {
-          firestoreQuery = firestoreQuery.where('market', '==', markets[0]);
-        }
-        hasFilter = true;
-      }
-
-      // Always fetch from cache as fallback to guarantee full data list
-      const limitVal = hasFilter ? 2000 : 3000;
-
-      if (limitVal > 0) {
-        const snapshot = await firestoreQuery.limit(limitVal).get();
-        let addedCount = 0;
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          // Avoid duplicate records by checking if we already fetched them live (by matching market + commodity + arrival_date)
-          const isDuplicate = combinedRecords.some(r => 
-            r.market && data.market && r.market.toLowerCase() === data.market.toLowerCase() &&
-            r.commodity && data.commodity && r.commodity.toLowerCase() === data.commodity.toLowerCase() &&
-            r.arrival_date === data.arrival_date
-          );
-          if (!isDuplicate) {
-            combinedRecords.push(data);
-            addedCount++;
-          }
-        });
-        console.log(`ℹ️ Firestore Integration: Integrated ${addedCount} cached records from database. Combined records count: ${combinedRecords.length}`);
-      }
-
-      // Get last successful sync log timestamp
-      try {
-        const syncLogsSnapshot = await db.collection('syncLogs')
-          .where('status', '==', 'success')
-          .orderBy('completed_at', 'desc')
-          .limit(1)
-          .get();
-        if (!syncLogsSnapshot.empty) {
-          const logData = syncLogsSnapshot.docs[0].data();
-          const completedAt = logData.completed_at;
-          lastSynced = completedAt ? (completedAt.toDate ? completedAt.toDate().toISOString() : new Date(completedAt).toISOString()) : new Date().toISOString();
-        }
-      } catch (syncError) {
-        console.warn('⚠️ Could not fetch last sync timestamp:', syncError.message);
-      }
-    } catch (dbError) {
-      console.error("❌ Firestore cached merge failed:", dbError.message);
-    }
-
-    // 3. Group records by commodity + market to extract today's and yesterday's price
-    // Note: To provide a clean, unique listing for the table, we group them first.
-    let decoratedData = [];
-
-    const parseDateHelper = (dateStr) => {
-      if (!dateStr) return null;
-      const parts = dateStr.split('/');
-      if (parts.length !== 3) return null;
-      return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-    };
-
-    if (req.query.grouped === 'true') {
-      const groups = {};
-      combinedRecords.forEach(record => {
-        if (!record.commodity || !record.market) return;
-        const key = `${record.commodity.trim()}_${record.market.trim()}`;
-        if (!groups[key]) {
-          groups[key] = [];
-        }
-        groups[key].push(record);
-      });
-
-      Object.keys(groups).forEach(key => {
-        const groupItems = groups[key];
-        
-        // Sort chronologically descending (newest date first)
-        groupItems.sort((a, b) => {
-          const dA = parseDateHelper(a.arrival_date);
-          const dB = parseDateHelper(b.arrival_date);
-          if (!dA && !dB) return 0;
-          if (!dA) return 1;
-          if (!dB) return -1;
-          return dB - dA;
-        });
-
-        const todayItem = groupItems[0];
-        const yesterdayItem = groupItems[1];
-
-        const todayPrice = Number(todayItem.modal_price) || 0;
-        const yesterdayPrice = yesterdayItem ? (Number(yesterdayItem.modal_price) || 0) : null;
-
-        let dailyChangePercentage = 0;
-        if (yesterdayPrice && yesterdayPrice > 0) {
-          dailyChangePercentage = Number((((todayPrice - yesterdayPrice) / yesterdayPrice) * 100).toFixed(2));
-        } else {
-          const mspNum = Number(todayItem.min_price) || 0;
-          if (mspNum > 0) {
-            dailyChangePercentage = Number((((todayPrice - mspNum) / mspNum) * 100).toFixed(1));
-          }
-        }
-
-        decoratedData.push({
-          ...todayItem,
-          price: todayPrice,
-          min_price: Number(todayItem.min_price) || 0,
-          max_price: Number(todayItem.max_price) || 0,
-          yesterday_price: yesterdayPrice,
-          daily_change: yesterdayPrice ? (todayPrice - yesterdayPrice) : 0,
-          daily_change_percentage: dailyChangePercentage,
-          priceChange: dailyChangePercentage,
-          weekly_average: todayPrice,
-          weekly_trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
-          trend: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable",
-          status: dailyChangePercentage > 1 ? "Bullish" : dailyChangePercentage < -1 ? "Bearish" : "Stable"
-        });
-      });
-    } else {
-      // For external developers using the API directly, return raw un-grouped data!
-      decoratedData = combinedRecords.map(item => ({
-        ...item,
-        price: Number(item.modal_price) || 0,
-        min_price: Number(item.min_price) || 0,
-        max_price: Number(item.max_price) || 0
-      }));
-    }
-
-    // 4. Apply advanced search, filtering, and sorting in memory
-    let finalData = decoratedData;
-
-    // Filter by State (supports comma separated)
-    if (req.query.state) {
-      const stateFilters = req.query.state.toLowerCase().split(',').map(s => s.trim());
-      finalData = finalData.filter(r => r.state && stateFilters.includes(r.state.toLowerCase()));
-    }
-    
-    // Filter by Commodity (supports comma separated)
-    if (req.query.commodity) {
-      const commFilters = req.query.commodity.toLowerCase().split(',').map(c => c.trim());
-      if (commFilters.includes('lemon') || commFilters.includes('lime')) {
-        if (!commFilters.includes('lemon')) commFilters.push('lemon');
-        if (!commFilters.includes('lime')) commFilters.push('lime');
-      }
-      finalData = finalData.filter(r => r.commodity && commFilters.includes(r.commodity.toLowerCase()));
-    }
-
-    // Filter by Market (supports comma separated)
-    if (req.query.market) {
-      const marketFilters = req.query.market.toLowerCase().split(',').map(m => m.trim());
-      finalData = finalData.filter(r => r.market && marketFilters.includes(r.market.toLowerCase()));
-    }
-
-    // Full-Text Search (Lemon/Lime smart expansion)
-    if (req.query.search) {
-      const searchQ = req.query.search.toLowerCase();
-      const actualSearchTerms = [searchQ];
-      if (searchQ === 'lemon' || searchQ === 'lemons') {
-        actualSearchTerms.push('lime');
-      } else if (searchQ === 'lime' || searchQ === 'limes') {
-        actualSearchTerms.push('lemon');
-      }
-      
-      finalData = finalData.filter(r => 
-        actualSearchTerms.some(term => 
-          (r.commodity && r.commodity.toLowerCase().includes(term)) ||
-          (r.market && r.market.toLowerCase().includes(term)) ||
-          (r.state && r.state.toLowerCase().includes(term)) ||
-          (r.district && r.district.toLowerCase().includes(term))
-        )
-      );
-    }
-
-    // Sort by Field
-    const sortField = req.query.sort || 'arrival_date';
-    const sortOrder = req.query.order || 'desc';
-    
-    finalData.sort((a, b) => {
-      let valA = a[sortField];
-      let valB = b[sortField];
-
-      // Handle date parsing if sorting by arrival_date
-      if (sortField === 'arrival_date') {
-        valA = parseDateHelper(a.arrival_date) || new Date(0);
-        valB = parseDateHelper(b.arrival_date) || new Date(0);
-      } else if (typeof valA === 'string') {
-        valA = valA.toLowerCase();
-        valB = valB.toLowerCase();
-      }
-
-      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
-    });
-
-    // 5. Pagination calculation
-    const totalRecords = finalData.length;
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10000; // Increased default limit to 10000 so developers get all data
-    const totalPages = Math.ceil(totalRecords / limit) || 1;
-    const paginatedData = finalData.slice((page - 1) * limit, page * limit);
-
-    res.json({
-      success: true,
-      source: "agmarknet.gov.in",
-      last_synced: lastSynced,
-      pagination: {
-        total_records: totalRecords,
-        page: page,
-        limit: limit,
-        total_pages: totalPages
-      },
-      data: paginatedData
-    });
-  } catch (error) {
-    console.error('Error fetching Mandi prices:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal Server Error: Failed to fetch data.',
-      error: error.message
-    });
-  }
-});
-
-// Helper function to parse DD/MM/YYYY date strings safely
-const parseDate = (dateStr) => {
-  if (!dateStr) return null;
-  const parts = dateStr.split('/');
-  if (parts.length !== 3) return null;
-  const day = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10) - 1; // 0-indexed month
-  const year = parseInt(parts[2], 10);
-  if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
-  return new Date(year, month, day);
-};
-
-// GET /api/mandi-prices/history (Protected)
-app.get('/api/mandi-prices/history', requireApiKey, async (req, res) => {
-  try {
-    const { commodity, market, from, to } = req.query;
-    
-    if (!commodity || !market) {
-      return res.status(400).json({
-        success: false,
-        message: "commodity and market are required"
-      });
-    }
-    
-    let parsedTo = to ? parseDate(to) : null;
-    let parsedFrom = from ? parseDate(from) : null;
-    
-    // Default to a 3-month historical window if "from" is not provided
-    if (!parsedFrom) {
-      const baseDate = parsedTo || new Date(2026, 4, 22);
-      parsedFrom = new Date(baseDate);
-      parsedFrom.setMonth(parsedFrom.getMonth() - 3); // 3 months back
-    }
-    if (!parsedTo) {
-      parsedTo = new Date(2026, 4, 22); // Default to today/May 22, 2026
-    }
-    
-    let data = [];
-    let actualCommodity = commodity;
-    let actualMarket = market;
-    
-    try {
-      // Query by document ID range prefix
-      const startId = `${slugify(market)}_${slugify(commodity)}_`;
-      const endId = `${slugify(market)}_${slugify(commodity)}_\uf8ff`;
-      
-      const snapshot = await db.collection('mandiPrices')
-        .orderBy(admin.firestore.FieldPath.documentId())
-        .startAt(startId)
-        .endAt(endId)
-        .get();
-        
-      snapshot.forEach(doc => {
-        const docData = doc.data();
-        
-        // Case-insensitive verification
-        const matchesCommodity = docData.commodity && docData.commodity.toLowerCase() === commodity.toLowerCase();
-        const matchesMarket = docData.market && docData.market.toLowerCase() === market.toLowerCase();
-        
-        if (matchesCommodity && matchesMarket) {
-          // Keep track of exact database casing
-          actualCommodity = docData.commodity;
-          actualMarket = docData.market;
-          
-          const arrivalDateStr = docData.arrival_date;
-          const minPrice = docData.min_price ? Number(docData.min_price) : 0;
-          const maxPrice = docData.max_price ? Number(docData.max_price) : 0;
-          const modalPrice = docData.modal_price ? Number(docData.modal_price) : 0;
-          
-          data.push({
-            arrival_date: arrivalDateStr,
-            min_price: minPrice,
-            max_price: maxPrice,
-            modal_price: modalPrice
-          });
-        }
-      });
-    } catch (firestoreError) {
-      console.warn('⚠️ Firestore query failed on /api/mandi-prices/history (falling back to generated sandbox mock):', firestoreError.message);
-    }
-    
-    // Resilient Fallback: if data is empty, generate dynamic mock history (90 days of history for 3 months)
-    if (data.length === 0) {
-      const daysToGenerate = 90;
-      const baseDate = parsedTo;
-      
-      // Determine realistic base price based on the commodity
-      let basePrice = 2000;
-      const lowerComm = commodity.toLowerCase();
-      if (lowerComm.includes('rice')) basePrice = 2050;
-      else if (lowerComm.includes('chilli')) basePrice = 18000;
-      else if (lowerComm.includes('cotton')) basePrice = 7200;
-      else if (lowerComm.includes('wheat')) basePrice = 2450;
-      else if (lowerComm.includes('tomato')) basePrice = 1850;
-      else if (lowerComm.includes('onion')) basePrice = 2200;
-      else if (lowerComm.includes('oil')) basePrice = 105000;
-      
-      for (let i = daysToGenerate - 1; i >= 0; i--) {
-        const currentDate = new Date(baseDate);
-        currentDate.setDate(baseDate.getDate() - i);
-        
-        const day = currentDate.getDate();
-        const month = currentDate.getMonth() + 1;
-        const year = currentDate.getFullYear();
-        
-        const dayStr = day < 10 ? `0${day}` : `${day}`;
-        const monthStr = month < 10 ? `0${month}` : `${month}`;
-        const arrival_date = `${dayStr}/${monthStr}/${year}`;
-        
-        // Dynamically simulate premium, realistic daily price fluctuations
-        const priceChange = generateStablePriceChange(commodity, market) * (i - 45) * 0.4;
-        const modal_price = Math.round(basePrice + priceChange);
-        const min_price = Math.round(modal_price * 0.92);
-        const max_price = Math.round(modal_price * 1.08);
-        
-        data.push({
-          arrival_date,
-          min_price,
-          max_price,
-          modal_price
-        });
-      }
-      
-      actualCommodity = commodity.charAt(0).toUpperCase() + commodity.slice(1);
-      actualMarket = market.charAt(0).toUpperCase() + market.slice(1);
-    }
-    
-    // Filter by date range parameters in-memory
-    if (parsedFrom) {
-      data = data.filter(item => {
-        const itemDate = parseDate(item.arrival_date);
-        return itemDate && itemDate >= parsedFrom;
-      });
-    }
-    
-    if (parsedTo) {
-      data = data.filter(item => {
-        const itemDate = parseDate(item.arrival_date);
-        return itemDate && itemDate <= parsedTo;
-      });
-    }
-    
-    // Sort by arrival_date ascending
-    data.sort((a, b) => {
-      const dateA = parseDate(a.arrival_date);
-      const dateB = parseDate(b.arrival_date);
-      if (!dateA && !dateB) return 0;
-      if (!dateA) return 1;
-      if (!dateB) return -1;
-      return dateA - dateB;
-    });
-    
-    // Calculate analytics and comparison data
-    let analytics = null;
-    if (data.length > 0) {
-      const modalPrices = data.map(item => item.modal_price);
-      const totalModal = modalPrices.reduce((sum, val) => sum + val, 0);
-      const avgModal = Math.round(totalModal / data.length);
-      
-      const highestPrice = Math.max(...modalPrices);
-      const lowestPrice = Math.min(...modalPrices);
-      
-      const oldestPrice = data[0].modal_price;
-      const newestPrice = data[data.length - 1].modal_price;
-      
-      let priceChangePercentage = 0;
-      if (oldestPrice > 0) {
-        priceChangePercentage = Number((((newestPrice - oldestPrice) / oldestPrice) * 100).toFixed(2));
-      }
-      
-      let trend = "Stable";
-      if (priceChangePercentage > 1) trend = "Bullish";
-      else if (priceChangePercentage < -1) trend = "Bearish";
-      
-      analytics = {
-        average_modal_price: avgModal,
-        highest_price: highestPrice,
-        lowest_price: lowestPrice,
-        price_change: newestPrice - oldestPrice,
-        price_change_percentage: priceChangePercentage,
-        trend
-      };
-    }
-    
-    const formatDate = (date) => {
-      const day = date.getDate();
-      const month = date.getMonth() + 1;
-      const year = date.getFullYear();
-      const dayStr = day < 10 ? `0${day}` : `${day}`;
-      const monthStr = month < 10 ? `0${month}` : `${month}`;
-      return `${dayStr}/${monthStr}/${year}`;
-    };
-    
-    res.json({
-      success: true,
-      commodity: actualCommodity,
-      market: actualMarket,
-      from: from || formatDate(parsedFrom),
-      to: to || formatDate(parsedTo),
-      count: data.length,
-      analytics,
-      data
-    });
-  } catch (error) {
-    console.error('Error fetching Mandi history:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal Server Error: Failed to fetch historical data.',
-      error: error.message
-    });
-  }
-});
-
-// FEATURE 3 — Add /api/keys/generate endpoint (Public — no API key needed)
-app.post('/api/keys/generate', async (req, res) => {
-  const { email, app_name } = req.body;
-  
-  if (!email || !app_name) {
-    return res.status(400).json({
-      success: false,
-      message: "Bad Request: Email and app_name are required."
-    });
-  }
-  
-  // Generate random 24 alphanumeric character key
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let randomPart = '';
-  for (let i = 0; i < 24; i++) {
-    randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  const apiKey = `agro_live_${randomPart}`;
-  
-  try {
-    await db.collection('users').add({
-      apiKey,
-      email,
-      app_name,
-      status: 'approved',
-      plan: 'free',
-      usage_today: 0,
-      usage_total: 0,
-      created_at: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
-    res.json({
-      success: true,
-      api_key: apiKey
-    });
-  } catch (error) {
-    console.error('Error generating API Key:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal Server Error: Failed to generate API key.',
-      error: error.message
-    });
-  }
-});
-
-// FEATURE 6 — Add /api/admin/sync endpoint (Admin only)
-app.post('/api/admin/sync', async (req, res) => {
-  const adminKey = req.headers['x-admin-key'];
-  const expectedKey = process.env.ADMIN_KEY || 'your_secret_admin_key';
-  
-  if (!adminKey || adminKey !== expectedKey) {
-    return res.status(403).json({
-      success: false,
-      message: "Forbidden: Invalid admin key."
-    });
-  }
-  
-  // Trigger in background
-  syncGovApi().catch(err => console.error("Manual Gov API sync background error:", err));
-  
-  res.json({
-    success: true,
-    message: "Sync started"
-  });
-});
-
-// GET /api/states (Protected)
-app.get('/api/states', requireApiKey, async (req, res) => {
-  try {
-    let sortedStates = [];
-    try {
-      const snapshot = await db.collection('mandiPrices').select('state').get();
-      const states = new Set();
-      snapshot.forEach(doc => {
-        const state = doc.data().state;
-        if (state) states.add(state);
-      });
-      sortedStates = Array.from(states).sort();
-    } catch (firestoreError) {
-      console.warn('⚠️ Firestore query failed (using offline mock states):', firestoreError.message);
-    }
-    
-    if (sortedStates.length === 0) {
-      sortedStates = ["Andhra Pradesh", "Punjab", "Telangana", "Uttar Pradesh"];
-    }
-    
-    res.json({
-      success: true,
-      data: sortedStates
-    });
-  } catch (error) {
-    console.error('Error fetching unique states:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal Server Error: Failed to fetch unique states.',
-      error: error.message
-    });
-  }
-});
-
-// GET /api/commodities (Protected)
-app.get('/api/commodities', requireApiKey, async (req, res) => {
-  try {
-    let sortedCommodities = [];
-    try {
-      const snapshot = await db.collection('mandiPrices').select('commodity').get();
-      const commodities = new Set();
-      snapshot.forEach(doc => {
-        const commodity = doc.data().commodity;
-        if (commodity) commodities.add(commodity);
-      });
-      sortedCommodities = Array.from(commodities).sort();
-    } catch (firestoreError) {
-      console.warn('⚠️ Firestore query failed (using offline mock commodities):', firestoreError.message);
-    }
-    
-    if (sortedCommodities.length === 0) {
-      sortedCommodities = ["Chilli", "Cotton", "Mentha Oil", "Onion", "Tomato", "Wheat"];
-    }
-    
-    res.json({
-      success: true,
-      data: sortedCommodities
-    });
-  } catch (error) {
-    console.error('Error fetching unique commodities:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal Server Error: Failed to fetch unique commodities.',
-      error: error.message
-    });
-  }
-});
-
-// 2. Health check endpoint (Public - no API key required)
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    service: 'AgroBridge REST API'
-  });
-});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`\n======================================================`);
-  console.log(`🚀 AgroBridge REST API Server is running on port ${PORT}`);
-  console.log(`👉 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`👉 Protected data endpoint: http://localhost:${PORT}/api/mandi-prices`);
-  console.log(`======================================================\n`);
-
-  // Trigger Gov API Sync immediately on startup to get the absolute latest records from all states in India
-  console.log("🔄 Triggering initial startup Gov API Sync in background...");
-  syncGovApi().catch(err => console.error("Initial startup Gov API Sync failed:", err.message));
+  console.log(`✅ AgroBridge API Server running securely on port ${PORT}`);
 });

@@ -121,40 +121,40 @@ export default function Header() {
 
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+    <header className="glass-panel sticky top-0 z-50 border-b border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center gap-8">
-            <Link to="/" className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center shadow-sm">
-                <span className="text-white font-bold text-lg">A</span>
+            <Link to="/" className="flex items-center gap-2 group">
+              <div className="w-8 h-8 bg-gradient-to-tr from-emerald-600 to-green-400 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
+                <span className="text-slate-950 font-extrabold text-lg">A</span>
               </div>
-              <h1 className="text-xl font-bold text-gray-900 tracking-tight">AgroBridge</h1>
+              <h1 className="text-xl font-extrabold bg-gradient-to-r from-white via-slate-100 to-emerald-400 bg-clip-text text-transparent tracking-tight">AgroBridge</h1>
             </Link>
 
             <nav className="hidden md:flex items-center gap-6">
               <NavLink 
                 to="/" 
-                className={({ isActive }) => isActive ? "text-green-600 font-semibold" : "text-gray-600 hover:text-gray-900 font-medium transition-colors"}
+                className={({ isActive }) => isActive ? "text-emerald-400 font-bold" : "text-slate-400 hover:text-emerald-300 font-medium transition-colors"}
               >
                 {t('dashboard')}
               </NavLink>
               <NavLink 
                 to="/insights" 
-                className={({ isActive }) => isActive ? "text-green-600 font-semibold" : "text-gray-600 hover:text-gray-900 font-medium transition-colors"}
+                className={({ isActive }) => isActive ? "text-emerald-400 font-bold" : "text-slate-400 hover:text-emerald-300 font-medium transition-colors"}
               >
                 {t('insights')}
               </NavLink>
               <NavLink 
                 to="/add-price" 
-                className={({ isActive }) => isActive ? "text-green-600 font-semibold" : "text-gray-600 hover:text-gray-900 font-medium transition-colors"}
+                className={({ isActive }) => isActive ? "text-emerald-400 font-bold" : "text-slate-400 hover:text-emerald-300 font-medium transition-colors"}
               >
                 {t('addPrice')}
               </NavLink>
               {(!userData || userData.userType !== "Farmer") && (
                 <NavLink 
                   to="/api" 
-                  className={({ isActive }) => isActive ? "text-green-600 font-semibold" : "text-gray-600 hover:text-gray-900 font-medium transition-colors"}
+                  className={({ isActive }) => isActive ? "text-emerald-400 font-bold" : "text-slate-400 hover:text-emerald-300 font-medium transition-colors"}
                 >
                   API
                 </NavLink>
@@ -164,12 +164,12 @@ export default function Header() {
 
           <div className="flex items-center gap-4">
             {/* Language Selector */}
-            <div className="flex items-center gap-1 text-gray-700 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors">
-              <Globe size={18} className="text-gray-400" />
+            <div className="flex items-center gap-1 text-slate-300 px-2 py-2 rounded-lg hover:bg-slate-800/50 transition-colors">
+              <Globe size={18} className="text-emerald-500" />
               <select 
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
-                className="bg-transparent text-sm focus:outline-none cursor-pointer font-semibold text-gray-600"
+                className="bg-transparent text-sm focus:outline-none cursor-pointer font-semibold text-slate-300 [&>option]:bg-slate-900"
               >
                 <option value="en">English</option>
                 <option value="te">తెలుగు (Telugu)</option>

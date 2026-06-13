@@ -10,20 +10,22 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
   };
 
   return (
-    <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-100">
+    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 blur-[80px] -mr-20 -mt-20 pointer-events-none"></div>
+      
       <div className="relative mb-6">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
         <input 
           type="text" 
           placeholder="Search for commodities or markets (e.g., chillies, hyderabad)..." 
           value={filters?.searchQuery || ""}
           onChange={(e) => setFilters?.({ ...filters, searchQuery: e.target.value })}
-          className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-gray-700"
+          className="w-full pl-12 pr-4 py-3.5 bg-slate-900/50 border border-slate-700/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 text-white placeholder-slate-500 transition-all"
         />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-5 relative z-10">
         <div className="relative">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
             {t('state')}
           </label>
           <div className="relative">
@@ -34,7 +36,7 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
                 commodity: "All Commodities", 
                 market: "All Markets" 
               })}
-              className="w-full px-4 py-2.5 pr-10 bg-white border border-gray-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-4 py-3 pr-10 bg-slate-900/50 border border-slate-700/50 rounded-xl appearance-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 text-slate-200 [&>option]:bg-slate-900 transition-all cursor-pointer"
             >
               <option value="All States">{t('allStates')}</option>
               {distinctStates.map(state => (
@@ -42,14 +44,14 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
               ))}
             </select>
             <ChevronDown
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-              size={20}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+              size={18}
             />
           </div>
         </div>
 
         <div className="relative">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
             {t('commodity')}
           </label>
           <div className="relative">
@@ -60,7 +62,7 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
                 commodity: e.target.value, 
                 market: "All Markets" 
               })}
-              className="w-full px-4 py-2.5 pr-10 bg-white border border-gray-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-4 py-3 pr-10 bg-slate-900/50 border border-slate-700/50 rounded-xl appearance-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 text-slate-200 [&>option]:bg-slate-900 transition-all cursor-pointer"
             >
               <option value="All Commodities">{t('allCommodities')}</option>
               {distinctCommodities.map(commodity => (
@@ -68,21 +70,21 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
               ))}
             </select>
             <ChevronDown
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-              size={20}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+              size={18}
             />
           </div>
         </div>
 
         <div className="relative">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
             {t('market')}
           </label>
           <div className="relative">
             <select
               value={filters?.market || "All Markets"}
               onChange={(e) => setFilters?.({ ...filters, market: e.target.value })}
-              className="w-full px-4 py-2.5 pr-10 bg-white border border-gray-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-4 py-3 pr-10 bg-slate-900/50 border border-slate-700/50 rounded-xl appearance-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 text-slate-200 [&>option]:bg-slate-900 transition-all cursor-pointer"
             >
               <option value="All Markets">{t('allMarkets')}</option>
               {distinctMarkets.map(market => (
@@ -90,8 +92,8 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
               ))}
             </select>
             <ChevronDown
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-              size={20}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+              size={18}
             />
           </div>
         </div>
@@ -99,9 +101,9 @@ export default function FiltersSection({ filters, setFilters, distinctStates = [
         <div className="flex items-end">
           <button
             onClick={handleReset}
-            className="w-full px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 font-medium"
+            className="w-full px-6 py-3 bg-gradient-to-tr from-emerald-600 to-green-500 text-slate-950 font-bold rounded-xl hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all flex items-center justify-center gap-2 hover:scale-[1.02] cursor-pointer"
           >
-            <RefreshCw size={20} />
+            <RefreshCw size={18} />
             <span>{t('resetFilters')}</span>
           </button>
         </div>

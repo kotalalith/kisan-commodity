@@ -20,7 +20,10 @@ const ProtectedRoute = ({ children }) => {
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased relative">
+      {/* Background Decorative Lights */}
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-green-900/10 rounded-full blur-[120px] pointer-events-none"></div>
+      <div className="absolute top-1/2 right-1/4 w-[500px] h-[500px] bg-emerald-950/15 rounded-full blur-[150px] pointer-events-none"></div>
       <Header />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow w-full">

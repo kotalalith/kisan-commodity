@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { PlusCircle } from "lucide-react";
-import SummaryCards from "../components/SummaryCards";
 import FiltersSection from "../components/FiltersSection";
-import MandiTable from "../components/MandiTable";
+import MandiGrid from "../components/MandiGrid";
 import { useLanguage } from "../context/LanguageContext";
 import { fetchMandiFilters } from "../api/mandiApi";
 
@@ -31,21 +30,18 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <>
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-2">
-          {t('smartMandiSystem')}
+    <div className="relative z-10 animate-fadeIn">
+      {/* Dashboard Header */}
+      <div className="mb-10 text-center md:text-left">
+        <h2 className="text-4xl font-black bg-gradient-to-r from-emerald-400 to-green-300 bg-clip-text text-transparent mb-3 tracking-tight">
+          Live Market Intelligence
         </h2>
-        <p className="text-gray-600">
-          {t('realTimeInsights')}
+        <p className="text-slate-400 font-medium text-lg max-w-2xl">
+          Real-time agricultural commodity prices synced directly from the Government API and Community updates.
         </p>
       </div>
 
-      <div className="mb-8">
-        <SummaryCards mandiData={mandiData} />
-      </div>
-
-      <div className="mb-8">
+      <div className="mb-10 relative z-20">
         <FiltersSection 
           filters={filters} 
           setFilters={setFilters} 
@@ -62,19 +58,19 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="mb-8">
-        <MandiTable filters={filters} onDataFetched={setMandiData} />
+      <div className="mb-12 relative z-10">
+        <MandiGrid filters={filters} onDataFetched={setMandiData} />
       </div>
 
       <div className="fixed bottom-8 right-8 z-50 group">
         <Link 
           to="/add-price" 
-          className="flex items-center justify-center w-14 h-14 bg-green-600 text-white rounded-full hover:bg-green-700 transition-all hover:scale-110 shadow-lg hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-green-500/30"
+          className="flex items-center justify-center w-14 h-14 bg-gradient-to-tr from-emerald-600 to-green-400 text-slate-950 rounded-full hover:scale-110 transition-transform shadow-[0_0_20px_rgba(16,185,129,0.4)] focus:outline-none"
           title={t('addPrice')}
         >
-          <PlusCircle size={26} strokeWidth={2.5} />
+          <PlusCircle size={28} strokeWidth={2.5} />
         </Link>
       </div>
-    </>
+    </div>
   );
 }

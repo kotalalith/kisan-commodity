@@ -125,7 +125,7 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground overflow-x-hidden;
   }
 
   /**
@@ -195,17 +195,17 @@
   animation: mesh-gradient 15s ease infinite;
 }
 
-/* Glassmorphism Panels */
+/* Glassmorphism Panels (Dark Mode Default) */
 .glass-panel {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(15, 23, 42, 0.6); /* slate-950/60 */
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
 .dark .glass-panel {
-  background: rgba(23, 23, 23, 0.6);
+  background: rgba(15, 23, 42, 0.6);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
