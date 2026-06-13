@@ -48,7 +48,7 @@ export const fetchLiveMandiPrices = async (filters = {}, t) => {
 
     const baseUrl = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000');
     const localUrl = `${baseUrl}/api/mandi-prices?${params.toString()}`;
-    const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
+    const response = await fetchWithTimeout(localUrl, {}, 45000); // Increased timeout to 45s for Render cold start
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && json.data) {
@@ -196,7 +196,7 @@ export const fetchMandiHistory = async (commodity, market) => {
   try {
     const baseUrl = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000');
     const localUrl = `${baseUrl}/api/mandi-prices/history?api_key=agro_secret_key_12345&commodity=${encodeURIComponent(commodity)}&market=${encodeURIComponent(market)}`;
-    const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
+    const response = await fetchWithTimeout(localUrl, {}, 45000); // Increased timeout to 45s for Render cold start
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && Array.isArray(json.data)) {
@@ -331,7 +331,7 @@ export const fetchMandiFilters = async () => {
   try {
     const baseUrl = import.meta.env.DEV ? 'http://localhost:5000' : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000');
     const localUrl = `${baseUrl}/api/mandi-filters?api_key=agro_secret_key_12345`;
-    const response = await fetchWithTimeout(localUrl, {}, 15000); // Increased timeout to 15s
+    const response = await fetchWithTimeout(localUrl, {}, 45000); // Increased timeout to 45s for Render cold start
     if (response.ok) {
       const json = await response.json();
       if (json && json.success && json.data) {
